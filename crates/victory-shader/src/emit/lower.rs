@@ -2546,6 +2546,17 @@ impl<'a> Lower<'a> {
                     self.set(scc, Val::Bit(s));
                     Ok(())
                 }
+                "s_getpc_b64" => {
+                    // The code-relative address of the next instruction, the
+                    // base `resource` gives code tables (`CODE` addresses).
+                    // Its value only feeds per-lane address arithmetic whose
+                    // loads read the table through the tracked address.
+                    let a = self.s.m.i32(inst.machine.offset as u32 + 4);
+                    let b = self.s.m.i32(0);
+                    self.set(lo, Val::I32(a));
+                    self.set(hi, Val::I32(b));
+                    Ok(())
+                }
                 "s_mov_b64" => {
                     let (a, b) = (half(self, 0, 0)?, half(self, 0, 1)?);
                     self.set(lo, Val::I32(a));
