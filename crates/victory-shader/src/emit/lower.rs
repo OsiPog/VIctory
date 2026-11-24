@@ -766,6 +766,49 @@ impl<'a> Lower<'a> {
         let id = self.s.m.i32(ident);
         let x = self.s.m.select(c, on, x, id);
         self.s.flags |= flags::WAVE_OPS;
+        if prefix.is_some() && (op.wide() || op == Op::AddF16) {
+            return Err("a wave prefix of an operation other than a sum");
+        }
+        match op {
+            Op::AddF16 => {
+                // shortcut: summed in f32 and rounded once.
+                let (f32t, i32t) = (self.s.t.f32, self.s.t.i32);
+                let mask = self.s.m.i32(0xFFFF);
+                let h = self.s.m.bin(c, Bin::And, x, mask);
+                let f = self
+                    .s
+                    .op(c, "legacyF16ToF32", Attr::ReadNone, f32t, 131, &[h]);
+                let (k, u) = (self.s.m.i8(0), self.s.m.i8(0));
+                let r = self
+                    .s
+                    .op(c, "waveActiveOp.f32", Attr::NoUnwind, f32t, 119, &[f, k, u]);
+                return Ok(self
+                    .s
+                    .op(c, "legacyF32ToF16", Attr::ReadNone, i32t, 130, &[r]));
+            }
+            // shortcut: the module has no f64 type yet.
+            Op::AddF64Lo(_) | Op::AddF64Hi(_) => return Err("an f64 wave sum"),
+            Op::AddU64Hi(low) => {
+                // The high dword of the 64-bit sum of each lane's pair.
+                let lo = self.i32_of(low)?;
+                let zero = self.s.m.i32(0);
+                let lo = self.s.m.select(c, on, lo, zero);
+                let i64t = self.s.m.int(64);
+                self.s.flags |= flags::INT64;
+                let k32 = self.s.m.int_const(i64t, 32);
+                let l64 = self.s.m.cast(c, Cast::ZExt, lo, i64t);
+                let h64 = self.s.m.cast(c, Cast::ZExt, x, i64t);
+                let h64 = self.s.m.bin(c, Bin::Shl, h64, k32);
+                let w = self.s.m.bin(c, Bin::Or, l64, h64);
+                let (k, u) = (self.s.m.i8(0), self.s.m.i8(1));
+                let r = self
+                    .s
+                    .op(c, "waveActiveOp.i64", Attr::NoUnwind, i64t, 119, &[w, k, u]);
+                let r = self.s.m.bin(c, Bin::LShr, r, k32);
+                return Ok(self.s.m.cast(c, Cast::Trunc, r, self.s.t.i32));
+            }
+            _ => {}
+        }
         let float = matches!(op, Op::AddF | Op::MinF | Op::MaxF);
         let (i32t, f32t) = (self.s.t.i32, self.s.t.f32);
         let arg = if float { self.as_float(x) } else { x };
